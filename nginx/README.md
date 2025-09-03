@@ -21,7 +21,7 @@ Relies on repo paths for:
 ## Variables (common)
 
 - `primary_domain`: main domain, e.g., `n8n.example.com`
-- `alt_domains`: list of additional domains, e.g., `["tyr.example.com"]`
+- `alt_domains`: list of additional domains, e.g., `["www.example.com"]`
 - `n8n_upstream`: where nginx proxies, e.g., `127.0.0.1:5678`
 - `acme_install_dir`: acme.sh home, default `~/.acme.sh` for the remote user
 - `acme_dns_provider`: acme.sh DNS provider (e.g., `dns_cf`)
@@ -63,7 +63,7 @@ Or specify vars inline:
 ```bash
 ansible-playbook -i "your.host.name," -u youruser --become nginx/bootstrap.yml \
   -e primary_domain=n8n.example.com \
-  -e alt_domains='["tyr.example.com"]' \
+  -e alt_domains='["www.example.com"]' \
   -e acme_dns_provider=dns_cf \
   -e acme_env_vars='{"CF_Token":"...","CF_Account_ID":"..."}'
 
