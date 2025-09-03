@@ -1,0 +1,105 @@
+---
+- name: Install and configure host nginx for n8n
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Required external vars:
+    # - primary_domain: e.g., n8n.example.com
+    # - alt_domains: optional list, default []
+    alt_domains: []
+    n8n_upstream: "127.0.0.1:5678"
+
+    # Nginx paths (override if needed)
+    nginx_conf_dir: "/etc/nginx/conf.d"
+    nginx_include_dir: "/etc/nginx/includes"
+    nginx_ssl_dir: "/etc/nginx/ssl/{{ primary_domain }}"
+
+  handlers:
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+  tasks:
+    - name: Ensure prerequisites on Ubuntu
+      when: ansible_facts['os_family'] == 'Debian'
+      block:
+        - name: Add nginx signing key (Ubuntu)
+          ansible.builtin.apt_key:
+            url: https://nginx.org/keys/nginx_signing.key
+            state: present
+
+        - name: Add nginx official repo (Ubuntu)
+          ansible.builtin.apt_repository:
+            repo: "deb http://nginx.org/packages/ubuntu {{ ansible_facts['distribution_release'] }} nginx"
+            state: present
+
+        - name: Install latest nginx (Ubuntu)
+          ansible.builtin.apt:
+            name: nginx
+            state: latest
+            update_cache: true
+
+    - name: Ensure prerequisites on RHEL
+      when: ansible_facts['os_family'] == 'RedHat'
+      block:
+        - name: Import nginx signing key (RHEL)
+          ansible.builtin.rpm_key:
+            state: present
+            key: https://nginx.org/keys/nginx_signing.key
+
+        - name: Add nginx official repo (RHEL)
+          ansible.builtin.yum_repository:
+            name: nginx-stable
+            description: nginx stable repo
+            baseurl: http://nginx.org/packages/rhel/{{ ansible_facts['distribution_major_version'] }}/$basearch/
+            gpgcheck: yes
+            gpgkey: https://nginx.org/keys/nginx_signing.key
+            enabled: yes
+
+        - name: Install latest nginx (RHEL)
+          ansible.builtin.dnf:
+            name: nginx
+            state: latest
+
+    - name: Ensure nginx service is enabled and started
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Ensure nginx include directory exists (root-owned)
+      ansible.builtin.file:
+        path: "{{ nginx_include_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure nginx ssl parent directory exists (root-owned)
+      ansible.builtin.file:
+        path: "/etc/nginx/ssl"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure domain SSL directory exists (user-writable for acme deploy)
+      ansible.builtin.file:
+        path: "{{ nginx_ssl_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Install ssl.conf include
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/includes/ssl.conf"
+        dest: "{{ nginx_include_dir }}/ssl.conf"
+        mode: '0644'
+      notify: reload nginx
+
+    - name: Deploy n8n server block
+      ansible.builtin.template:
+        src: templates/n8n.conf.j2
+        dest: "{{ nginx_conf_dir }}/{{ primary_domain }}.conf"
+        mode: '0644'
+      notify: reload nginx

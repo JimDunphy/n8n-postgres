@@ -1,0 +1,75 @@
+---
+- name: Install acme.sh and optionally issue/deploy certificates
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # Required external vars:
+    # - primary_domain
+    # - alt_domains (optional)
+    alt_domains: []
+
+    # acme.sh settings (installed for connecting user, not root)
+    acme_install_dir: "{{ ansible_env.HOME }}/.acme.sh"
+    acme_dns_provider: "dns_cf"
+    acme_challenge_alias: ""
+    acme_account_email: ""
+    acme_env_vars: {}
+    acme_issue_deploy: false
+
+  handlers:
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+  tasks:
+    - name: Install acme.sh for the current user (adds user crontab)
+      become: false
+      ansible.builtin.shell: |
+        set -e
+        curl -fsSL https://get.acme.sh | sh -s {% if acme_account_email|length > 0 %}email={{ acme_account_email }}{% endif %}
+      args:
+        creates: "{{ acme_install_dir }}/acme.sh"
+
+    - name: Ensure acme.sh deploy directory exists (user home)
+      become: false
+      ansible.builtin.file:
+        path: "{{ acme_install_dir }}/deploy"
+        state: directory
+        mode: '0755'
+
+    - name: Install custom nginx deploy hook for acme.sh (user home)
+      become: false
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/acme.sh/deploy/nginx.sh"
+        dest: "{{ acme_install_dir }}/deploy/nginx.sh"
+        mode: '0755'
+
+    - name: Build ACME domain argument string
+      when: acme_issue_deploy | bool
+      ansible.builtin.set_fact:
+        acme_domain_args: "{{ (([primary_domain] + alt_domains) | map('regex_replace', '^', '-d ')) | join(' ') }}"
+
+    - name: Issue certificate with acme.sh (DNS provider) as user
+      become: false
+      when: acme_issue_deploy | bool and acme_domain_args | length > 0
+      ansible.builtin.shell: |
+        set -e
+        ./acme.sh --issue --dns {{ acme_dns_provider }} {% if acme_challenge_alias|length > 0 %}--challenge-alias {{ acme_challenge_alias }}{% endif %} {{ acme_domain_args }}
+      args:
+        chdir: "{{ acme_install_dir }}"
+        creates: "{{ acme_install_dir }}/{{ primary_domain }}/fullchain.cer"
+      environment: "{{ acme_env_vars }}"
+
+    - name: Deploy certificate to nginx via deploy hook (as user)
+      become: false
+      when: acme_issue_deploy | bool
+      ansible.builtin.shell: |
+        set -e
+        ./acme.sh --deploy --deploy-hook nginx -d {{ primary_domain }}
+      args:
+        chdir: "{{ acme_install_dir }}"
+      environment: "{{ acme_env_vars }}"
+      notify: reload nginx

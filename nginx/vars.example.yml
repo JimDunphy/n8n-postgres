@@ -1,0 +1,29 @@
+# Example vars for nginx playbooks
+
+primary_domain: "n8n.example.com"
+alt_domains:
+  - "www.example.com"
+
+# Optional email for acme.sh account
+acme_account_email: "admin@example.com"
+
+# DNS provider plugin for acme.sh (e.g., dns_cf, dns_aws, dns_gd)
+acme_dns_provider: "dns_cf"
+
+# Optional challenge alias (CNAME target for _acme-challenge)
+acme_challenge_alias: "some_other_domain.com"
+
+# Environment variables needed by your DNS provider plugin
+acme_env_vars:
+  CF_Token: "<your_cloudflare_token>"
+  CF_Account_ID: "<your_cloudflare_account_id>"
+
+# Where acme.sh will be installed for the remote user
+acme_install_dir: "~/.acme.sh"
+
+# Upstream where n8n listens (Compose binds loopback: host:5678 -> container:5678)
+n8n_upstream: "127.0.0.1:5678"
+
+# Control whether the playbook issues and deploys certificates
+# Default is false so you can bring existing certs or test nginx only
+acme_issue_deploy: false

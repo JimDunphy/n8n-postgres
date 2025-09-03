@@ -1,0 +1,6 @@
+---
+# Simple bootstrap orchestrator that imports the component playbooks
+
+- import_playbook: nginx.yml
+- import_playbook: acme.yml
+

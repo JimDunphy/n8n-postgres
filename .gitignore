@@ -1,0 +1,17 @@
+# Secrets and local config
+.env
+
+# Migration artifacts
+n8n-bundle-*.tgz
+export-*/
+n8n-import-*/
+
+# Nginx TLS assets (do not commit private keys)
+nginx/ssl/
+
+# Ignore contents of local working area but keep marker
+local-files/*
+!local-files/.gitkeep
+
+# Misc
+to-delete/

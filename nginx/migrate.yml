@@ -1,0 +1,150 @@
+---
+# Migration playbook: export from source host and import on target host
+# Default flow matches the documented steps: stop -> bundle -> transfer (optional) -> restore -> start
+
+- name: Export n8n stack from source host
+  hosts: source
+  gather_facts: true
+  become: true
+
+  vars:
+    project_dir_source: "~/n8n"
+    bundle_name: "export-{{ lookup('pipe','date +%Y%m%d%H%M%S') }}"
+    export_dir_source: "{{ project_dir_source }}/{{ bundle_name }}"
+
+    stop_before_export: true
+    start_after_export: false
+
+    perform_transfer: false
+    target_host: ""              # inventory hostname or ssh host
+    target_ssh_user: ""          # required if perform_transfer
+    target_receive_dir: "~"      # where to place bundle on target
+
+  tasks:
+    - name: Ensure export directory exists on source
+      ansible.builtin.file:
+        path: "{{ export_dir_source }}"
+        state: directory
+        mode: '0755'
+
+    - name: Stop stack before export (optional)
+      when: stop_before_export | bool
+      ansible.builtin.shell: |
+        set -e
+        ./manage.sh --stop
+      args:
+        chdir: "{{ project_dir_source }}"
+
+    - name: Create project bundle tarball
+      ansible.builtin.shell: |
+        set -e
+        cd {{ project_dir_source }}
+        files="compose.yml .env manage.sh README.md"
+        [ -d nginx ] && files="$files nginx"
+        [ -d local-files ] && files="$files local-files"
+        tar czf {{ export_dir_source }}/project.tgz $files
+      args:
+        executable: /bin/bash
+
+    - name: Snapshot n8n-data volume (tar.gz)
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm -v n8n-data:/data -v {{ export_dir_source }}:/backup busybox \
+          tar czf /backup/n8n-data.tgz -C /data .
+
+    - name: Snapshot postgres-data volume (tar.gz)
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm -v postgres-data:/data -v {{ export_dir_source }}:/backup busybox \
+          tar czf /backup/postgres-data.tgz -C /data .
+
+    - name: Start stack after export (optional)
+      when: start_after_export | bool
+      ansible.builtin.shell: |
+        set -e
+        ./manage.sh --start
+      args:
+        chdir: "{{ project_dir_source }}"
+
+    - name: Transfer bundle to target host via scp (optional)
+      when: perform_transfer | bool
+      ansible.builtin.shell: |
+        set -e
+        scp -r {{ export_dir_source }} {{ target_ssh_user }}@{{ target_host }}:{{ target_receive_dir }}/
+
+    - name: Show bundle location
+      ansible.builtin.debug:
+        msg: "Bundle created at {{ export_dir_source }} (bundle name: {{ bundle_name }})"
+
+- name: Import n8n stack to target host
+  hosts: target
+  gather_facts: true
+  become: true
+
+  vars:
+    project_dir_target: "~/n8n"
+    # Must match bundle_name used in the export play (top-level var or pass with -e)
+    bundle_name: "{{ bundle_name | default('export-UNKNOWN') }}"
+    target_receive_dir: "~"
+    bundle_dir_target: "{{ target_receive_dir }}/{{ bundle_name }}"
+
+  tasks:
+    - name: Ensure target project directory exists
+      ansible.builtin.file:
+        path: "{{ project_dir_target }}"
+        state: directory
+        mode: '0755'
+
+    - name: Verify bundle exists on target
+      ansible.builtin.stat:
+        path: "{{ bundle_dir_target }}/project.tgz"
+      register: bundle_check
+
+    - name: Fail if bundle not found
+      ansible.builtin.fail:
+        msg: "Bundle not found at {{ bundle_dir_target }}. Copy it here or enable perform_transfer in export play."
+      when: not bundle_check.stat.exists
+
+    - name: Extract project bundle into project directory
+      ansible.builtin.unarchive:
+        src: "{{ bundle_dir_target }}/project.tgz"
+        dest: "{{ project_dir_target }}"
+        remote_src: true
+
+    - name: Create docker volumes (idempotent)
+      ansible.builtin.shell: |
+        set -e
+        docker volume inspect n8n-data >/dev/null 2>&1 || docker volume create n8n-data >/dev/null
+        docker volume inspect postgres-data >/dev/null 2>&1 || docker volume create postgres-data >/dev/null
+
+    - name: Restore n8n-data into volume
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm -v n8n-data:/data -v {{ bundle_dir_target }}:/backup busybox \
+          sh -c "cd /data && tar xzf /backup/n8n-data.tgz"
+
+    - name: Restore postgres-data into volume
+      ansible.builtin.shell: |
+        set -e
+        docker run --rm -v postgres-data:/data -v {{ bundle_dir_target }}:/backup busybox \
+          sh -c "cd /data && tar xzf /backup/postgres-data.tgz"
+
+    - name: Start stack on target
+      ansible.builtin.shell: |
+        set -e
+        ./manage.sh --start
+      args:
+        chdir: "{{ project_dir_target }}"
+
+    - name: Show status
+      ansible.builtin.shell: |
+        ./manage.sh --status
+      args:
+        chdir: "{{ project_dir_target }}"
+      register: ps_out
+      changed_when: false
+
+    - name: Output status
+      ansible.builtin.debug:
+        var: ps_out.stdout
+
