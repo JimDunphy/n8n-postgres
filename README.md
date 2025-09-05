@@ -42,6 +42,7 @@ Check status: `./manage.sh --status` (both should be running and healthy after s
 - Use the playbooks in `nginx/` to install and configure nginx.
 - Example (inventory-less):
   - `ansible-playbook -i "your.host.name," -u youruser --become -e @nginx/vars.example.yml nginx/bootstrap.yml`
+  - Note: The trailing comma after the host (`your.host.name,`) tells Ansible this is an inline host list, not an inventory file path.
 - Ensure variables reflect your domain(s):
   - `primary_domain`, optional `alt_domains`, and `n8n_upstream: 127.0.0.1:5678`
 
@@ -131,6 +132,7 @@ Examples
 - n8n publishes: `127.0.0.1:${N8N_PORT:-5678} -> 5678` (loopback only)
 - postgres is internal only (no host port exposure)
 - Host nginx listens on 80/443 and proxies to `http://127.0.0.1:5678`
+- Port alignment: The container keeps listening on `5678`. If you change the host-mapped port (`N8N_PORT`), nginx can remain unchanged because it proxies to `127.0.0.1:5678`. Only change the container port if you also update `n8n_upstream` in `nginx/vars.example.yml` and re-render the vhost.
 
 ## Persistence and Where Data Lives
 
@@ -180,6 +182,13 @@ docker exec -i postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > pgdump-$(da
 ./manage.sh --upgrade
 ```
 
+ - If you prefer stable upgrades, pin the n8n image tag in `.env` (`N8N_IMAGE_TAG=`) and run `--upgrade` intentionally when you’re ready.
+ - If you stay on `latest`, export a bundle before upgrading so you can roll back easily:
+
+```bash
+./manage.sh --export-bundle && ./manage.sh --upgrade
+```
+
 - Restart / stop / status:
 
 ```bash
@@ -193,6 +202,9 @@ docker exec -i postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > pgdump-$(da
 - `restart: unless-stopped` is set for all services so they restart automatically after crashes or host reboots. Leave this enabled for production.
 - Healthchecks for n8n and postgres ensure the app is ready before serving traffic.
 - n8n is bound to loopback and not directly exposed to the internet; host nginx is the single entry point.
+ - Log rotation is enabled for both services (`json-file` with `max-size: 10m`, `max-file: 3`) to cap disk usage.
+ - Memory caps are parameterized via `.env` (`N8N_MEM_LIMIT`, `POSTGRES_MEM_LIMIT`) and default to `1g` each in `compose.yml`.
+ - A CPU cap example is provided in `compose.yml` but commented out for simplicity. To enable it later, set `N8N_CPUS` in `.env` and uncomment the `cpus` line.
 
 ## Troubleshooting
 
